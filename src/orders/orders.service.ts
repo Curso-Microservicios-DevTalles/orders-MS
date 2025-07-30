@@ -1,26 +1,37 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { HttpStatus, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PrismaClient } from 'generated/prisma';
-import { RpcException } from '@nestjs/microservices';
+import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { PaginationOrderDto } from './dto/pagination-order.dto';
 import { ChangeOrderStatusDto } from './dto/change-order-status.dto';
+import { PRODUCT_SERVICE } from 'src/config/services';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class OrdersService extends PrismaClient implements OnModuleInit {
   private readonly logger = new Logger('OrdersService');
+
+  constructor(
+    @Inject(PRODUCT_SERVICE)
+    private readonly productService: ClientProxy,
+  ) {
+    super();
+  }
 
   async onModuleInit() {
     await this.$connect();
     this.logger.log('Database connected');
   }
 
-  create(createOrderDto: CreateOrderDto) {
-    const newOreder = this.order.create({
-      data: createOrderDto,
-    })
+  async create(createOrderDto: CreateOrderDto) {
+    const ids = [146, 145];
 
-    return newOreder;
+    const products = await firstValueFrom(
+      this.productService.send({ cmd: 'validate' }, ids)
+    )
+
+    return products;
   }
 
   async findAll(paginationOrderDto: PaginationOrderDto) {
