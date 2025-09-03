@@ -1,11 +1,17 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { HttpStatus, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PrismaClient } from 'generated/prisma';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { PaginationOrderDto } from './dto/pagination-order.dto';
 import { ChangeOrderStatusDto } from './dto/change-order-status.dto';
-import { PRODUCT_SERVICE } from 'src/config/services';
+import { NATS_SERVICE } from 'src/config/services';
 import { firstValueFrom } from 'rxjs';
 
 @Injectable()
@@ -13,8 +19,8 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
   private readonly logger = new Logger('OrdersService');
 
   constructor(
-    @Inject(PRODUCT_SERVICE)
-    private readonly productService: ClientProxy,
+    @Inject(NATS_SERVICE)
+    private readonly client: ClientProxy,
   ) {
     super();
   }
@@ -26,21 +32,22 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
 
   async create(createOrderDto: CreateOrderDto) {
     try {
-
-      const productsIds = createOrderDto.items.map(item => item.productId);
+      const productsIds = createOrderDto.items.map((item) => item.productId);
 
       const products = await firstValueFrom(
-        this.productService.send({ cmd: 'validate' }, productsIds)
+        this.client.send({ cmd: 'validate' }, productsIds),
       );
 
       const totalAmount = createOrderDto.items.reduce((acc, orederItem) => {
-        const price = products.find(product => product.id === orederItem.productId)?.price;
+        const price = products.find(
+          (product) => product.id === orederItem.productId,
+        )?.price;
         return price * orederItem.quantity;
-      }, 0)
+      }, 0);
 
       const totalItems = createOrderDto.items.reduce((acc, orederItem) => {
         return acc + orederItem.quantity;
-      }, 0)
+      }, 0);
 
       const order = await this.order.create({
         data: {
@@ -48,13 +55,15 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
           totalItems,
           orderItem: {
             createMany: {
-              data: createOrderDto.items.map(orderItem => ({
-                price: products.find(product => product.id === orderItem.productId).price,
+              data: createOrderDto.items.map((orderItem) => ({
+                price: products.find(
+                  (product) => product.id === orderItem.productId,
+                ).price,
                 productId: orderItem.productId,
                 quantity: orderItem.quantity,
-              }))
-            }
-          }
+              })),
+            },
+          },
         },
         include: {
           orderItem: {
@@ -62,23 +71,24 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
               price: true,
               quantity: true,
               productId: true,
-            }
+            },
           },
-        }
-      })
+        },
+      });
 
       return {
         ...order,
-        OrderItem: order.orderItem.map(orderItem => ({
+        OrderItem: order.orderItem.map((orderItem) => ({
           ...orderItem,
-          name: products.find(product => product.id === orderItem.productId).name,
-        }))
+          name: products.find((product) => product.id === orderItem.productId)
+            .name,
+        })),
       };
     } catch (error) {
       throw new RpcException({
         status: HttpStatus.BAD_REQUEST,
         message: 'Error creating order',
-      })
+      });
     }
   }
 
@@ -86,8 +96,8 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
     const totalPages = await this.order.count({
       where: {
         status: paginationOrderDto.status,
-      }
-    })
+      },
+    });
 
     const currentPage = paginationOrderDto.page || 1;
     const perPage = paginationOrderDto.limit || 10;
@@ -104,8 +114,8 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
         total: totalPages,
         page: currentPage,
         last_page: Math.ceil(totalPages / perPage),
-      }
-    }
+      },
+    };
   }
 
   async findOne(id: string) {
@@ -113,56 +123,57 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
       where: {
         id,
       },
-       include: {
+      include: {
         orderItem: {
           select: {
             price: true,
             quantity: true,
             productId: true,
-          }
-        }
-       }
-    })
+          },
+        },
+      },
+    });
 
-    if(!order) {
+    if (!order) {
       throw new RpcException({
         status: HttpStatus.NOT_FOUND,
         message: `Order with id #${id} not found.`,
-      })
+      });
     }
 
-    const productIds = order.orderItem.map(orderItem => orderItem.productId);
+    const productIds = order.orderItem.map((orderItem) => orderItem.productId);
     const products = await firstValueFrom(
-      this.productService.send({ cmd: 'validate' }, productIds)
+      this.client.send({ cmd: 'validate' }, productIds),
     );
 
     return {
       ...order,
-      OrderItem: order.orderItem.map(orderItem => ({
+      OrderItem: order.orderItem.map((orderItem) => ({
         ...orderItem,
-        name: products.find(product => product.id === orderItem.productId).name,
-      }))
+        name: products.find((product) => product.id === orderItem.productId)
+          .name,
+      })),
     };
   }
 
-  async changeStatus(changeOrderStatusDto: ChangeOrderStatusDto){
-    const {id, status} = changeOrderStatusDto;
+  async changeStatus(changeOrderStatusDto: ChangeOrderStatusDto) {
+    const { id, status } = changeOrderStatusDto;
     const order = await this.findOne(id);
 
-    if(order.status === status){
+    if (order.status === status) {
       return order;
     }
 
-    if(!order){
+    if (!order) {
       throw new RpcException({
         status: HttpStatus.NOT_FOUND,
         message: `Order with id #${id} not found.`,
-      })
+      });
     }
 
     return this.order.update({
-      where: {id},
-      data: {status}
-    })
+      where: { id },
+      data: { status },
+    });
   }
 }
